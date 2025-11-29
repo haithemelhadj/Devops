@@ -2,29 +2,28 @@ pipeline {
     agent any
 
     tools {
-        maven 'maven-3' // Nom de Maven défini dans Jenkins → Manage Jenkins → Tools
-        jdk 'Java 17'   // Nom du JDK configuré dans Jenkins
+        maven 'maven-3'      // name of Maven tool in Jenkins
+        jdk 'Java 17'        // name of JDK tool in Jenkins
     }
 
     stages {
-        stage('Checkout') {
+        stage('Clone Repo') {
             steps {
-                // Récupération du code depuis Git
-                git branch: 'main', url: 'https://github.com/ton-user/ton-projet.git'
+                git branch: 'main',
+                    credentialsId: 'github-token',
+                    url: 'https://github.com/haithemelhadj/Devops.git'
             }
         }
 
-        stage('Build') {
+        stage('Build Docker Image') {
             steps {
-                // Build Maven et package le projet
-                sh 'mvn clean package -DskipTests'
+                sh 'docker build -t devops .'
             }
         }
 
-        stage('Archive') {
+        stage('Run Container') {
             steps {
-                // Archive le .jar généré pour consultation dans Jenkins
-                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+                sh 'docker run -d --name devops_container -p 8081:80 devops'
             }
         }
     }
