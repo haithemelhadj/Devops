@@ -2,12 +2,18 @@ pipeline {
     agent any
 
     tools {
-        maven 'maven-3'      // name of Maven tool in Jenkins
-        jdk 'Java 17'        // name of JDK tool in Jenkins
+        maven 'maven-3'
+        jdk 'Java 17'
+    }
+
+    environment {
+        DOCKER_IMAGE = "haithemelhadj/devops-app"
+        SONARQUBE_SERVER = "sonarqube-server"   // Name in Jenkins config
     }
 
     stages {
-        stage('Clone Repo') {
+
+        stage('Clone Repository') {
             steps {
                 git branch: 'main',
                     credentialsId: 'github-token',
@@ -15,16 +21,25 @@ pipeline {
             }
         }
 
-        stage('Build Docker Image') {
+        stage('Build with Maven') {
             steps {
-                sh 'docker build -t devops .'
+                sh 'mvn clean package'
             }
         }
 
-        stage('Run Container') {
+        stage('Run SonarQube Analysis') {
             steps {
-                sh 'docker run -d --name devops_container -p 8081:80 devops'
+                withSonarQubeEnv("${SONARQUBE_SERVER}") {
+                    sh '''
+                    mvn sonar:sonar \
+                    -Dsonar.projectKey=devops-project \
+                    -Dsonar.host.url=http://localhost:9000 \
+                    -Dsonar.login=YOUR_SONAR_TOKEN
+                    '''
+                }
             }
         }
-    }
-}
+
+        stage('Build Docker Image') {
+            steps {
+                sh 'docker build -t $DOCKER_IMA_
