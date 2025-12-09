@@ -8,12 +8,12 @@ pipeline {
 
     environment {
         DOCKER_IMAGE = "haithemelhadj/devops-app"
-        SONARQUBE_SERVER = "sonarqube-server"   // Name in Jenkins config
+        SONARQUBE_SERVER = "sonarqube-server"
     }
 
     stages {
 
-        stage('Clone Repository') {
+        stage('Clone Repo') {
             steps {
                 git branch: 'main',
                     credentialsId: 'github-token',
@@ -27,19 +27,19 @@ pipeline {
             }
         }
 
-        stage('Run SonarQube Analysis') {
+        stage('Build Docker Image') {
             steps {
-                withSonarQubeEnv("${SONARQUBE_SERVER}") {
-                    sh '''
-                    mvn sonar:sonar \
-                    -Dsonar.projectKey=devops-project \
-                    -Dsonar.host.url=http://localhost:9000 \
-                    -Dsonar.login=YOUR_SONAR_TOKEN
-                    '''
-                }
+                sh "docker build -t ${DOCKER_IMAGE}:latest ."
             }
         }
 
-        stage('Build Docker Image') {
+        stage('Run Container') {
             steps {
-                sh 'docker build -t $DOCKER_IMA_
+                sh """
+                docker rm -f devops_container || true
+                docker run -d --name devops_container -p 8081:8080 ${DOCKER_IMAGE}:latest
+                """
+            }
+        }
+    }
+}
