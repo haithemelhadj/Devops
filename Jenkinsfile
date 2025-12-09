@@ -33,13 +33,18 @@ pipeline {
             }
         }
 
+        
         stage('Run Container') {
-            steps {
-                sh """
-                docker rm -f devops_container || true
-                docker run -d --name devops_container -p 8081:8080 ${DOCKER_IMAGE}:latest
-                """
-            }
-        }
+    steps {
+        sh """
+        docker rm -f devops_container || true
+        docker run -d \
+          --name devops_container \
+          --network host \
+          ${DOCKER_IMAGE}:latest
+        """
+    }
+}
+
     }
 }
