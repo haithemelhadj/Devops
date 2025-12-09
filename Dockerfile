@@ -1,20 +1,9 @@
-# Base image
-FROM ubuntu:20.04
+FROM openjdk:17-jdk-slim
 
-ARG DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && \
-    apt-get install -y tzdata && \
-    ln -fs /usr/share/zoneinfo/UTC /etc/localtime && \
-    dpkg-reconfigure --frontend noninteractive tzdata
-
-# Install Java (needed for Maven builds)
-RUN apt-get update && apt-get install -y openjdk-17-jdk maven git curl
-
-# Set working directory
 WORKDIR /app
 
-# Copy repo contents into container
-COPY . /app
+COPY target/*.jar app.jar
 
-# Default command
-CMD ["bash"]
+EXPOSE 8080
+
+ENTRYPOINT ["java", "-jar", "app.jar"]
