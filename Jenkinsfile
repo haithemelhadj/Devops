@@ -31,7 +31,7 @@ pipeline {
 
         stage('SonarQube Analysis') {
             steps {
-                withCredentials([string(credentialsId: '5b961956-c66a-4315-bf03-aa25f7ae393d', variable: 'SONAR_TOKEN')]) {
+                withCredentials([string(credentialsId: 'dockerhub-token', variable: 'SONAR_TOKEN')]) {
                     sh """
                     mvn sonar:sonar \
                       -Dsonar.projectKey=devops-app \
