@@ -31,7 +31,7 @@ pipeline {
 
         stage('SonarQube Analysis') {
             steps {
-                withCredentials([string(credentialsId: 'fe76591d4e5ed8b224a9ba46e005c0db3f3f28e4cfdfd46c7176a0b1e54c64a9', variable: 'SONAR_TOKEN')]) {
+                withCredentials([string(credentialsId: '5b961956-c66a-4315-bf03-aa25f7ae393d', variable: 'SONAR_TOKEN')]) {
                     sh """
                     mvn sonar:sonar \
                       -Dsonar.projectKey=devops-app \
