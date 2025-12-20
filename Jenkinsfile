@@ -153,6 +153,15 @@ pipeline {
         minikube kubectl --profile=jenkins-minikube -- \
           rollout status deployment/grafana -n monitoring --timeout=180s
 
+          # Wait for Prometheus pods to be ready
+minikube kubectl --profile=jenkins-minikube -- \
+  wait --for=condition=ready pod -n monitoring -l app=prometheus --timeout=300s
+
+# Then get the service URL safely
+PROM_URL=$(minikube service prometheus-server -n monitoring --profile=jenkins-minikube --url)
+echo "Prometheus URL: $PROM_URL"
+
+
         echo "Prometheus URL:"
         minikube service prometheus-server -n monitoring --profile=jenkins-minikube --url
 
