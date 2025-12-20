@@ -60,6 +60,51 @@ pipeline {
             }
         }
 
+        stage('Push Docker Image') {
+            steps {
+                script {
+                    withCredentials([usernamePassword(
+                        credentialsId: 'dockerhub-creds',
+                        usernameVariable: 'DOCKER_USERNAME',
+                        passwordVariable: 'DOCKER_PASSWORD'
+                    )]) {
+                        sh '''
+                        echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin
+                        docker push ${DOCKER_IMAGE}:latest
+                        '''
+                    }
+                }
+            }
+        }
+        stage('Deploy to Kubernetes') {
+            steps {
+                script {
+                    sh '''
+                    export MINIKUBE_HOME=$WORKSPACE/.minikube
+                    export PATH=$WORKSPACE/.minikube/bin:$PATH
+
+                    # Start Minikube with a dedicated profile
+                    $MINIKUBE_HOME/bin/minikube start --driver=docker --kubernetes-version=v1.34.0 --profile=jenkins-minikube --wait=all
+
+                    # Use minikube kubectl with the same profile
+                    $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- apply -f k8s/deployment.yaml
+                    $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- apply -f k8s/service.yaml
+
+                    # Wait for deployment to be ready
+                    $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- \
+                        rollout status deployment/devops-app --timeout=180s
+
+                    # Wait for pod readiness
+                    $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- \
+                        wait --for=condition=ready pod -l app=devops-app --timeout=180s
+
+
+                    # Optional: get service URL
+                    $MINIKUBE_HOME/bin/minikube service devops-app-service --profile=jenkins-minikube --url
+                    '''
+                }
+            }
+        }
       stage('Deploy Monitoring (Prometheus + Grafana)') {
     steps {
         sh '''
