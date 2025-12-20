@@ -75,5 +75,18 @@ pipeline {
                 """
             }
         }
+        stage('Deploy to Minikube') {
+    steps {
+        script {
+            // Apply Kubernetes manifests
+            sh 'minikube kubectl -- apply -f k8s/deployment.yaml'
+            sh 'minikube kubectl -- apply -f k8s/service.yaml'
+            
+            // Optional: print the service URL
+            sh 'minikube service devops-app-service --url'
+        }
+    }
+}
+
     }
 }
