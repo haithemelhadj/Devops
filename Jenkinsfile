@@ -22,22 +22,20 @@ pipeline {
         }
 
         stage('Build with Maven') {
-    steps {
-        sh 'mvn clean package -DskipTests'
-    }
-}
-
-
+            steps {
+                sh 'mvn clean package -DskipTests'
+            }
+        }
 
         stage('SonarQube Analysis') {
             steps {
                 withCredentials([string(credentialsId: 'jenkins-sonar-token', variable: 'SONAR_TOKEN')]) {
-                    sh  '''
+                    sh '''
                     mvn sonar:sonar \
                       -Dsonar.projectKey=devops-app \
                       -Dsonar.host.url=http://localhost:9000 \
                       -Dsonar.login=$SONAR_TOKEN
-                     '''
+                    '''
                 }
             }
         }
@@ -58,7 +56,8 @@ pipeline {
                     )]) {
                         sh '''
                         echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin
-                        docker push ''' + "${DOCKER_IMAGE}:latest"
+                        docker push ${DOCKER_IMAGE}:latest
+                        '''
                     }
                 }
             }
@@ -76,27 +75,43 @@ pipeline {
             }
         }
 
-        //-------
-        //-----
         stage('Deploy to Kubernetes') {
-    steps {
-        script {
-            // Start Minikube in Docker inside the pipeline workspace
-            sh '''
-            export MINIKUBE_HOME=$WORKSPACE/.minikube
-            minikube start --driver=docker --kubernetes-version=v1.34.0 --profile=jenkins-minikube
-            export KUBECONFIG=$MINIKUBE_HOME/profiles/jenkins-minikube/kubeconfig
-            kubectl apply -f k8s/deployment.yaml
-            kubectl apply -f k8s/service.yaml
-            '''
-            
-            // Optional: get service URL
-            sh 'kubectl get svc devops-app-service -o jsonpath="{.status.loadBalancer.ingress[0].ip}" || minikube service devops-app-service --url'
+            steps {
+                script {
+                    // Install minikube & kubectl dynamically inside Jenkins pipeline
+                    sh '''
+                    # Use a local workspace for minikube
+                    export MINIKUBE_HOME=$WORKSPACE/.minikube
+                    export PATH=$WORKSPACE/.minikube/bin:$PATH
+
+                    # Install kubectl (if not installed)
+                    if [ ! -f $WORKSPACE/.minikube/bin/kubectl ]; then
+                        mkdir -p $WORKSPACE/.minikube/bin
+                        curl -Lo $WORKSPACE/.minikube/bin/kubectl https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl
+                        chmod +x $WORKSPACE/.minikube/bin/kubectl
+                    fi
+
+                    # Install minikube (if not installed)
+                    if [ ! -f $WORKSPACE/.minikube/bin/minikube ]; then
+                        curl -Lo $WORKSPACE/.minikube/bin/minikube https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+                        chmod +x $WORKSPACE/.minikube/bin/minikube
+                    fi
+
+                    # Start minikube
+                    $WORKSPACE/.minikube/bin/minikube start --driver=docker --kubernetes-version=v1.34.0 --profile=jenkins-minikube
+
+                    # Set kubeconfig
+                    export KUBECONFIG=$MINIKUBE_HOME/profiles/jenkins-minikube/kubeconfig
+
+                    # Deploy app
+                    $WORKSPACE/.minikube/bin/minikube kubectl -- apply -f k8s/deployment.yaml
+                    $WORKSPACE/.minikube/bin/minikube kubectl -- apply -f k8s/service.yaml
+
+                    # Optional: get service URL
+                    $WORKSPACE/.minikube/bin/minikube service devops-app-service --url
+                    '''
+                }
+            }
         }
-    }
-}
-//-----
-
-
     }
 }
