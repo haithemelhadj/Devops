@@ -83,14 +83,11 @@ pipeline {
                     export PATH=$WORKSPACE/.minikube/bin:$PATH
 
                     # Start Minikube with a dedicated profile
-                    $MINIKUBE_HOME/bin/minikube start --driver=docker --kubernetes-version=v1.34.0 --profile=jenkins-minikube
+                    $MINIKUBE_HOME/minikube start --driver=docker --kubernetes-version=v1.34.0 --profile=jenkins-minikube --wait=all
 
-                    # 2 Set kubeconfig for that profile
-                    export KUBECONFIG=$MINIKUBE_HOME/profiles/jenkins-minikube/kubeconfig
-
-                    # 2 Apply manifests using minikube kubectl with the correct profile
-                    $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- apply -f k8s/deployment.yaml
-                    $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- apply -f k8s/service.yaml
+                    # Use minikube kubectl with the same profile
+                    $MINIKUBE_HOME/minikube kubectl --profile=jenkins-minikube -- apply -f k8s/deployment.yaml
+                    $MINIKUBE_HOME/minikube kubectl --profile=jenkins-minikube -- apply -f k8s/service.yaml
 
                     # 2 Optional: get service URL
                     $MINIKUBE_HOME/bin/minikube service devops-app-service --profile=jenkins-minikube --url
