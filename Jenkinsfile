@@ -89,7 +89,16 @@ pipeline {
                     $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- apply -f k8s/deployment.yaml
                     $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- apply -f k8s/service.yaml
 
-                    # 2 Optional: get service URL
+                    # Wait for deployment to be ready
+                    $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- \
+                        rollout status deployment/devops-app --timeout=180s
+
+                    # Wait for pod readiness
+                    $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- \
+                        wait --for=condition=ready pod -l app=devops-app --timeout=180s
+
+
+                    # Optional: get service URL
                     $MINIKUBE_HOME/bin/minikube service devops-app-service --profile=jenkins-minikube --url
                     '''
                 }
