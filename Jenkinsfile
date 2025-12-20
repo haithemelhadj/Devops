@@ -104,5 +104,48 @@ pipeline {
                 }
             }
         }
+        stage('Deploy Monitoring (Prometheus + Grafana)') {
+    steps {
+        sh '''
+        export MINIKUBE_HOME=$WORKSPACE/.minikube
+        export PATH=$MINIKUBE_HOME/bin:$PATH
+
+        # Install Helm (portable)
+        if ! command -v helm >/dev/null 2>&1; then
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+        fi
+
+        # Use minikube kubectl context
+        export KUBECONFIG=$MINIKUBE_HOME/profiles/jenkins-minikube/kubeconfig
+
+        # Add Helm repos
+        helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+        helm repo add grafana https://grafana.github.io/helm-charts
+        helm repo update
+
+        # Create monitoring namespace
+        kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
+
+        # Install Prometheus
+        helm upgrade --install prometheus prometheus-community/prometheus \
+          --namespace monitoring \
+          --set server.service.type=NodePort \
+          --set server.service.nodePort=30090
+
+        # Install Grafana
+        helm upgrade --install grafana grafana/grafana \
+          --namespace monitoring \
+          -f k8s/monitoring/values-grafana.yaml
+
+        # Wait for Grafana
+        kubectl rollout status deployment/grafana -n monitoring --timeout=180s
+
+        # Show access URLs
+        minikube service grafana -n monitoring --url --profile=jenkins-minikube
+        minikube service prometheus-server -n monitoring --url --profile=jenkins-minikube
+        '''
+    }
+}
+
     }
 }
