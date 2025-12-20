@@ -75,6 +75,10 @@ pipeline {
                 """
             }
         }
+        withEnv(["KUBECONFIG=/home/kuruttakao/.kube/config"]) {
+    sh 'minikube kubectl -- apply -f k8s/deployment.yaml'
+}
+
         stage('Deploy to Minikube') {
     steps {
         script {
