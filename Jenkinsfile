@@ -75,19 +75,27 @@ pipeline {
                 """
             }
         }
-        
-stage('Deploy to Minikube') {
-    steps {
-        withEnv(["KUBECONFIG=/home/kuruttakao/.kube/config"]) {
-            // Apply Kubernetes manifests
-            sh 'minikube kubectl -- apply -f k8s/deployment.yaml'
-            sh 'minikube kubectl -- apply -f k8s/service.yaml'
 
-            // Optional: print the service URL
-            sh 'minikube service devops-app-service --url'
+        //-------
+        //-----
+        stage('Deploy to Kubernetes') {
+    steps {
+        script {
+            // Start Minikube in Docker inside the pipeline workspace
+            sh '''
+            export MINIKUBE_HOME=$WORKSPACE/.minikube
+            minikube start --driver=docker --kubernetes-version=v1.34.0 --profile=jenkins-minikube
+            export KUBECONFIG=$MINIKUBE_HOME/profiles/jenkins-minikube/kubeconfig
+            kubectl apply -f k8s/deployment.yaml
+            kubectl apply -f k8s/service.yaml
+            '''
+            
+            // Optional: get service URL
+            sh 'kubectl get svc devops-app-service -o jsonpath="{.status.loadBalancer.ingress[0].ip}" || minikube service devops-app-service --url'
         }
     }
 }
+//-----
 
 
     }
