@@ -46,22 +46,22 @@ pipeline {
             }
         }
 
-        stage('Push Docker Image') {
-            steps {
-                script {
-                    withCredentials([usernamePassword(
-                        credentialsId: 'dockerhub-creds',
-                        usernameVariable: 'DOCKER_USERNAME',
-                        passwordVariable: 'DOCKER_PASSWORD'
-                    )]) {
-                        sh '''
-                        echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin
-                        docker push ${DOCKER_IMAGE}:latest
-                        '''
-                    }
-                }
-            }
-        }
+#        stage('Push Docker Image') {
+#            steps {
+#                script {
+#                    withCredentials([usernamePassword(
+#                        credentialsId: 'dockerhub-creds',
+#                        usernameVariable: 'DOCKER_USERNAME',
+#                        passwordVariable: 'DOCKER_PASSWORD'
+#                    )]) {
+#                        sh '''
+#                        echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin
+#                        docker push ${DOCKER_IMAGE}:latest
+#                        '''
+#                    }
+#                }
+#            }
+#        }
 
         stage('Run Container') {
             steps {
@@ -104,7 +104,7 @@ pipeline {
                 }
             }
         }
-       stage('Deploy Monitoring (Prometheus + Grafana)') {
+      stage('Deploy Monitoring (Prometheus + Grafana)') {
     steps {
         sh '''
         set -e
@@ -115,7 +115,7 @@ pipeline {
 
         mkdir -p $HELM_HOME/bin
 
-        # Install Helm locally (NO sudo)
+        # Install Helm locally (no sudo)
         if [ ! -f "$HELM_HOME/bin/helm" ]; then
           curl -sSL https://get.helm.sh/helm-v3.15.4-linux-amd64.tar.gz -o helm.tar.gz
           tar -xzf helm.tar.gz
@@ -123,16 +123,18 @@ pipeline {
           chmod +x $HELM_HOME/bin/helm
         fi
 
-        # Ensure correct kubeconfig
-        export KUBECONFIG=$MINIKUBE_HOME/profiles/jenkins-minikube/kubeconfig
+        # Start Minikube (idempotent)
+        minikube start --driver=docker --profile=jenkins-minikube --wait=all
+
+        # Create namespace safely
+        minikube kubectl --profile=jenkins-minikube -- \
+          create namespace monitoring --dry-run=client -o yaml | \
+        minikube kubectl --profile=jenkins-minikube -- apply -f -
 
         # Add Helm repos
         helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
         helm repo add grafana https://grafana.github.io/helm-charts
         helm repo update
-
-        # Create monitoring namespace
-        kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
 
         # Install Prometheus
         helm upgrade --install prometheus prometheus-community/prometheus \
@@ -143,19 +145,23 @@ pipeline {
         # Install Grafana
         helm upgrade --install grafana grafana/grafana \
           --namespace monitoring \
-          -f k8s/monitoring/values-grafana.yaml
+          --set service.type=NodePort \
+          --set service.nodePort=30030 \
+          --set adminPassword=admin
 
-        # Wait until Grafana is ready
-        kubectl rollout status deployment/grafana -n monitoring --timeout=180s
-
-        echo "Grafana URL:"
-        minikube service grafana -n monitoring --profile=jenkins-minikube --url
+        # Wait for Grafana
+        minikube kubectl --profile=jenkins-minikube -- \
+          rollout status deployment/grafana -n monitoring --timeout=180s
 
         echo "Prometheus URL:"
         minikube service prometheus-server -n monitoring --profile=jenkins-minikube --url
+
+        echo "Grafana URL:"
+        minikube service grafana -n monitoring --profile=jenkins-minikube --url
         '''
     }
 }
+
 
     }
 }
