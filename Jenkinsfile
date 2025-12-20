@@ -78,37 +78,33 @@ pipeline {
         stage('Deploy to Kubernetes') {
             steps {
                 script {
-                    // Install minikube & kubectl dynamically inside Jenkins pipeline
                     sh '''
                     # Use a local workspace for minikube
                     export MINIKUBE_HOME=$WORKSPACE/.minikube
                     export PATH=$WORKSPACE/.minikube/bin:$PATH
 
-                    # Install kubectl (if not installed)
-                    if [ ! -f $WORKSPACE/.minikube/bin/kubectl ]; then
-                        mkdir -p $WORKSPACE/.minikube/bin
-                        curl -Lo $WORKSPACE/.minikube/bin/kubectl https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl
-                        chmod +x $WORKSPACE/.minikube/bin/kubectl
-                    fi
-
-                    # Install minikube (if not installed)
-                    if [ ! -f $WORKSPACE/.minikube/bin/minikube ]; then
-                        curl -Lo $WORKSPACE/.minikube/bin/minikube https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
-                        chmod +x $WORKSPACE/.minikube/bin/minikube
-                    fi
 
                     # Start minikube
-                    $WORKSPACE/.minikube/bin/minikube start --driver=docker --kubernetes-version=v1.34.0 --profile=jenkins-minikube
+                    # $WORKSPACE/.minikube/bin/minikube start --driver=docker --kubernetes-version=v1.34.0 --profile=jenkins-minikube
+                    # 2 Start Minikube with a dedicated profile
+                    $MINIKUBE_HOME/bin/minikube start --driver=docker --kubernetes-version=v1.34.0 --profile=jenkins-minikube
 
                     # Set kubeconfig
+                    # export KUBECONFIG=$MINIKUBE_HOME/profiles/jenkins-minikube/kubeconfig
+                    # 2 Set kubeconfig for that profile
                     export KUBECONFIG=$MINIKUBE_HOME/profiles/jenkins-minikube/kubeconfig
 
                     # Deploy app
-                    $WORKSPACE/.minikube/bin/minikube kubectl -- apply -f k8s/deployment.yaml
-                    $WORKSPACE/.minikube/bin/minikube kubectl -- apply -f k8s/service.yaml
+                    # $WORKSPACE/.minikube/bin/minikube kubectl -- apply -f k8s/deployment.yaml
+                    # $WORKSPACE/.minikube/bin/minikube kubectl -- apply -f k8s/service.yaml
+                    # 2 Apply manifests using minikube kubectl with the correct profile
+                    $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- apply -f k8s/deployment.yaml
+                    $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- apply -f k8s/service.yaml
 
                     # Optional: get service URL
-                    $WORKSPACE/.minikube/bin/minikube service devops-app-service --url
+                    # $WORKSPACE/.minikube/bin/minikube service devops-app-service --url
+                    # 2 Optional: get service URL
+                    $MINIKUBE_HOME/bin/minikube service devops-app-service --profile=jenkins-minikube --url
                     '''
                 }
             }
