@@ -46,22 +46,22 @@ pipeline {
             }
         }
 
-        stage('Push Docker Image') {
-            steps {
-                script {
-                    withCredentials([usernamePassword(
-                        credentialsId: 'dockerhub-creds',
-                        usernameVariable: 'DOCKER_USERNAME',
-                        passwordVariable: 'DOCKER_PASSWORD'
-                    )]) {
-                        sh '''
-                        echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin
-                        docker push ${DOCKER_IMAGE}:latest
-                        '''
-                    }
-                }
-            }
-        }
+#        stage('Push Docker Image') {
+#            steps {
+#                script {
+#                    withCredentials([usernamePassword(
+#                        credentialsId: 'dockerhub-creds',
+#                        usernameVariable: 'DOCKER_USERNAME',
+#                        passwordVariable: 'DOCKER_PASSWORD'
+#                    )]) {
+#                        sh '''
+#                        echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin
+#                        docker push ${DOCKER_IMAGE}:latest
+#                        '''
+#                    }
+#                }
+#            }
+#        }
 
         stage('Run Container') {
             steps {
