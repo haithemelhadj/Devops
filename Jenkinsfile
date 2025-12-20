@@ -75,22 +75,20 @@ pipeline {
                 """
             }
         }
-        withEnv(["KUBECONFIG=/home/kuruttakao/.kube/config"]) {
-    sh 'minikube kubectl -- apply -f k8s/deployment.yaml'
-}
-
-        stage('Deploy to Minikube') {
+        
+stage('Deploy to Minikube') {
     steps {
-        script {
+        withEnv(["KUBECONFIG=/home/kuruttakao/.kube/config"]) {
             // Apply Kubernetes manifests
             sh 'minikube kubectl -- apply -f k8s/deployment.yaml'
             sh 'minikube kubectl -- apply -f k8s/service.yaml'
-            
+
             // Optional: print the service URL
             sh 'minikube service devops-app-service --url'
         }
     }
 }
+
 
     }
 }
