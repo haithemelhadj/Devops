@@ -13,8 +13,8 @@ spec:
         app: devops-app
     spec:
       containers:
-        - name: devops-app
-          image: haithemelhadj/devops-app:latest
-          imagePullPolicy: Always
-          ports:
-            - containerPort: 8089
+      - name: devops-app
+        image: haithemelhadj/devops-app:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
