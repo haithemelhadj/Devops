@@ -104,18 +104,26 @@ pipeline {
                 }
             }
         }
-        stage('Deploy Monitoring (Prometheus + Grafana)') {
+       stage('Deploy Monitoring (Prometheus + Grafana)') {
     steps {
         sh '''
-        export MINIKUBE_HOME=$WORKSPACE/.minikube
-        export PATH=$MINIKUBE_HOME/bin:$PATH
+        set -e
 
-        # Install Helm (portable)
-        if ! command -v helm >/dev/null 2>&1; then
-          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+        export MINIKUBE_HOME=$WORKSPACE/.minikube
+        export HELM_HOME=$WORKSPACE/.helm
+        export PATH=$MINIKUBE_HOME/bin:$HELM_HOME/bin:$PATH
+
+        mkdir -p $HELM_HOME/bin
+
+        # Install Helm locally (NO sudo)
+        if [ ! -f "$HELM_HOME/bin/helm" ]; then
+          curl -sSL https://get.helm.sh/helm-v3.15.4-linux-amd64.tar.gz -o helm.tar.gz
+          tar -xzf helm.tar.gz
+          mv linux-amd64/helm $HELM_HOME/bin/helm
+          chmod +x $HELM_HOME/bin/helm
         fi
 
-        # Use minikube kubectl context
+        # Ensure correct kubeconfig
         export KUBECONFIG=$MINIKUBE_HOME/profiles/jenkins-minikube/kubeconfig
 
         # Add Helm repos
@@ -137,12 +145,14 @@ pipeline {
           --namespace monitoring \
           -f k8s/monitoring/values-grafana.yaml
 
-        # Wait for Grafana
+        # Wait until Grafana is ready
         kubectl rollout status deployment/grafana -n monitoring --timeout=180s
 
-        # Show access URLs
-        minikube service grafana -n monitoring --url --profile=jenkins-minikube
-        minikube service prometheus-server -n monitoring --url --profile=jenkins-minikube
+        echo "Grafana URL:"
+        minikube service grafana -n monitoring --profile=jenkins-minikube --url
+
+        echo "Prometheus URL:"
+        minikube service prometheus-server -n monitoring --profile=jenkins-minikube --url
         '''
     }
 }
