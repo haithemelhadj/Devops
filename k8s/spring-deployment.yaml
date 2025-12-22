@@ -1,0 +1,194 @@
+---
+# PersistentVolume for Spring Boot logs
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: spring-logs-pv
+  namespace: devops
+spec:
+  capacity:
+    storage: 2Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: manual
+  hostPath:
+    path: "/mnt/data/spring-logs"
+    type: DirectoryOrCreate
+
+---
+# PersistentVolumeClaim for Spring Boot logs
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: spring-logs-pvc
+  namespace: devops
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 2Gi
+  storageClassName: manual
+
+---
+# ConfigMap for Spring Boot configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spring-config
+  namespace: devops
+data:
+  # Database URL
+  SPRING_DATASOURCE_URL: "jdbc:mysql://mysql-service:3306/devopsdb?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true"
+  SPRING_JPA_HIBERNATE_DDL_AUTO: "update"
+  SPRING_JPA_SHOW_SQL: "true"
+  SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT: "org.hibernate.dialect.MySQL8Dialect"
+  SERVER_PORT: "8089"
+
+---
+# Secret for Spring Boot database credentials
+apiVersion: v1
+kind: Secret
+metadata:
+  name: spring-secret
+  namespace: devops
+type: Opaque
+data:
+  # username: devopsuser (base64 encoded)
+  SPRING_DATASOURCE_USERNAME: ZGV2b3BzdXNlcg==
+  # password: devopspassword (base64 encoded)
+  SPRING_DATASOURCE_PASSWORD: ZGV2b3BzcGFzc3dvcmQ=
+
+---
+# Spring Boot Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devops-app
+  namespace: devops
+  labels:
+    app: devops-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: devops-app
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: devops-app
+    spec:
+      # Wait for MySQL to be ready before starting
+      initContainers:
+      - name: wait-for-mysql
+        image: busybox:1.35
+        command: 
+        - sh
+        - -c
+        - |
+          until nc -z mysql-service 3306; do
+            echo "Waiting for MySQL to be ready..."
+            sleep 5
+          done
+          echo "MySQL is ready!"
+      containers:
+      - name: devops-app
+        image: haithemelhadj/devops-app:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8089
+          name: http
+        env:
+        # Environment variables from ConfigMap
+        - name: SPRING_DATASOURCE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: spring-config
+              key: SPRING_DATASOURCE_URL
+        - name: SPRING_JPA_HIBERNATE_DDL_AUTO
+          valueFrom:
+            configMapKeyRef:
+              name: spring-config
+              key: SPRING_JPA_HIBERNATE_DDL_AUTO
+        - name: SPRING_JPA_SHOW_SQL
+          valueFrom:
+            configMapKeyRef:
+              name: spring-config
+              key: SPRING_JPA_SHOW_SQL
+        - name: SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT
+          valueFrom:
+            configMapKeyRef:
+              name: spring-config
+              key: SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT
+        - name: SERVER_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: spring-config
+              key: SERVER_PORT
+        # Secrets for database credentials
+        - name: SPRING_DATASOURCE_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: spring-secret
+              key: SPRING_DATASOURCE_USERNAME
+        - name: SPRING_DATASOURCE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: spring-secret
+              key: SPRING_DATASOURCE_PASSWORD
+        volumeMounts:
+        - name: logs-storage
+          mountPath: /app/logs
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8089
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8089
+          initialDelaySeconds: 30
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      volumes:
+      - name: logs-storage
+        persistentVolumeClaim:
+          claimName: spring-logs-pvc
+
+---
+# Spring Boot Service (NodePort)
+apiVersion: v1
+kind: Service
+metadata:
+  name: devops-app-service
+  namespace: devops
+  labels:
+    app: devops-app
+spec:
+  type: NodePort
+  ports:
+  - port: 8089
+    targetPort: 8089
+    nodePort: 30007
+    protocol: TCP
+    name: http
+  selector:
+    app: devops-app
