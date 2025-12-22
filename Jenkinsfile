@@ -215,11 +215,7 @@ pipeline {
                     $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- describe pvc spring-logs-pvc -n devops
                 }
                 
-                # Wait for deployment
-                echo "Waiting for Spring Boot deployment to be ready..."
-                $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- \
-                    rollout status deployment/devops-app -n devops --timeout=300s
-                
+               
                 # Wait for pods to be ready
                 $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- \
                     wait --for=condition=ready pod -l app=devops-app -n devops --timeout=300s
