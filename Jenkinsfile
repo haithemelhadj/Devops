@@ -15,6 +15,29 @@ pipeline {
 
     stages {
 
+        stage('Cleanup Previous Run') {
+            steps {
+                sh '''
+                # Stop and clean any previous Minikube instance
+                export PATH=$MINIKUBE_HOME/bin:$PATH
+                
+                if [ -f "$MINIKUBE_HOME/bin/minikube" ]; then
+                    echo "Cleaning up previous Minikube instance..."
+                    $MINIKUBE_HOME/bin/minikube delete --profile=jenkins-minikube || true
+                    
+                    # Clean Minikube cache and configs
+                    rm -rf $MINIKUBE_HOME/.kube || true
+                    rm -rf $MINIKUBE_HOME/profiles/jenkins-minikube || true
+                fi
+                
+                # Clean up old Docker containers
+                docker rm -f devops_container || true
+                
+                echo "Cleanup completed"
+                '''
+            }
+        }
+
         stage('Clone Repo') {
             steps {
                 git branch: 'main',
@@ -33,6 +56,9 @@ pipeline {
             steps {
                 withCredentials([string(credentialsId: 'jenkins-sonar-token', variable: 'SONAR_TOKEN')]) {
                     sh '''
+                    # Ensure no Minikube interference
+                    unset KUBECONFIG
+                    
                     mvn sonar:sonar \
                       -Dsonar.projectKey=devops-app \
                       -Dsonar.host.url=http://localhost:9000 \
@@ -79,23 +105,39 @@ pipeline {
                 
                 # Install Minikube if not exists
                 if [ ! -f "$MINIKUBE_HOME/bin/minikube" ]; then
+                    echo "Installing Minikube..."
                     mkdir -p $MINIKUBE_HOME/bin
                     curl -Lo $MINIKUBE_HOME/bin/minikube https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
                     chmod +x $MINIKUBE_HOME/bin/minikube
+                else
+                    echo "Minikube already installed"
                 fi
                 
-                # Start Minikube
+                # Clean any corrupted Docker containers from previous runs
+                echo "Cleaning Docker system..."
+                docker system prune -f --volumes
+                
+                # Start fresh Minikube instance
+                echo "Starting Minikube..."
                 $MINIKUBE_HOME/bin/minikube start \
                     --driver=docker \
                     --profile=jenkins-minikube \
                     --memory=6144 \
                     --cpus=3 \
                     --disk-size=40g \
+                    --delete-on-failure \
                     --wait=all \
-                    --wait-timeout=5m
+                    --wait-timeout=10m
                 
                 # Verify Minikube is running
+                echo "Verifying Minikube status..."
                 $MINIKUBE_HOME/bin/minikube status --profile=jenkins-minikube
+                
+                # Test kubectl connectivity
+                echo "Testing kubectl connectivity..."
+                $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- get nodes
+                
+                echo "Minikube setup completed successfully"
                 '''
             }
         }
@@ -104,6 +146,12 @@ pipeline {
             steps {
                 sh '''
                 export PATH=$MINIKUBE_HOME/bin:$PATH
+                
+                # Verify Minikube is still running
+                if ! $MINIKUBE_HOME/bin/minikube status --profile=jenkins-minikube | grep -q "Running"; then
+                    echo "ERROR: Minikube is not running!"
+                    exit 1
+                fi
                 
                 # Create namespace
                 $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- \
@@ -118,9 +166,11 @@ pipeline {
                 
                 # Wait for PVC to be bound
                 echo "Waiting for MySQL PVC to be bound..."
-                $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- \
-                    wait --for=jsonpath='{.status.phase}'=Bound \
-                    pvc/mysql-pvc -n devops --timeout=120s
+                timeout 120s bash -c 'until kubectl get pvc mysql-pvc -n devops -o jsonpath="{.status.phase}" | grep -q "Bound"; do echo "Waiting..."; sleep 5; done' || {
+                    echo "PVC binding timeout"
+                    $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- describe pvc mysql-pvc -n devops
+                    exit 1
+                }
                 
                 # Wait for MySQL deployment
                 echo "Waiting for MySQL deployment to be ready..."
@@ -160,9 +210,10 @@ pipeline {
                 
                 # Wait for PVC to be bound
                 echo "Waiting for Spring Boot PVC to be bound..."
-                $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- \
-                    wait --for=jsonpath='{.status.phase}'=Bound \
-                    pvc/spring-logs-pvc -n devops --timeout=120s
+                timeout 120s bash -c 'until kubectl get pvc spring-logs-pvc -n devops -o jsonpath="{.status.phase}" | grep -q "Bound"; do echo "Waiting..."; sleep 5; done' || {
+                    echo "PVC binding timeout"
+                    $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- describe pvc spring-logs-pvc -n devops
+                }
                 
                 # Wait for deployment
                 echo "Waiting for Spring Boot deployment to be ready..."
@@ -185,10 +236,10 @@ pipeline {
                 
                 # Test health endpoint
                 echo "=== Testing Application Health ==="
-                sleep 10
+                sleep 15
                 $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- \
                     exec -n devops deployment/devops-app -- \
-                    curl -s http://localhost:8089/actuator/health || echo "Health check will be available once app starts"
+                    curl -s http://localhost:8089/actuator/health || echo "Health check will be available once app fully starts"
                 
                 echo "Spring Boot deployment completed successfully!"
                 '''
@@ -282,7 +333,7 @@ pipeline {
                 echo ""
                 echo "=== All Pods Status ==="
                 $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- \
-                    get pods --all-namespaces
+                    get pods --all-namespaces -o wide
                 
                 # Get all services
                 echo ""
@@ -335,17 +386,50 @@ pipeline {
         failure {
             sh '''
             export PATH=$MINIKUBE_HOME/bin:$PATH
-            echo "=== DEBUGGING INFORMATION ==="
+            
+            echo "=========================================="
+            echo "DEBUGGING INFORMATION"
+            echo "=========================================="
+            
             echo ""
-            echo "Minikube logs:"
-            $MINIKUBE_HOME/bin/minikube logs --profile=jenkins-minikube --length=50 || true
+            echo "=== Minikube Status ==="
+            $MINIKUBE_HOME/bin/minikube status --profile=jenkins-minikube || echo "Minikube not running"
+            
             echo ""
-            echo "All pods status:"
-            $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- get pods -A || true
+            echo "=== Minikube Logs (last 100 lines) ==="
+            $MINIKUBE_HOME/bin/minikube logs --profile=jenkins-minikube --length=100 || echo "Cannot retrieve logs"
+            
             echo ""
-            echo "Failed pods details:"
+            echo "=== All Pods Status ==="
+            $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- get pods -A || echo "Cannot get pods"
+            
+            echo ""
+            echo "=== Failed/Pending Pods Details ==="
             $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- \
-                get pods -A --field-selector=status.phase!=Running,status.phase!=Succeeded || true
+                get pods -A --field-selector=status.phase!=Running,status.phase!=Succeeded || echo "No failed pods or cannot access"
+            
+            echo ""
+            echo "=== Docker Containers ==="
+            docker ps -a | grep minikube || echo "No Minikube containers"
+            
+            echo ""
+            echo "=== Disk Space ==="
+            df -h
+            
+            echo ""
+            echo "=== Docker Disk Usage ==="
+            docker system df
+            
+            echo "=========================================="
+            '''
+        }
+        cleanup {
+            sh '''
+            # Optional: Uncomment to clean up Minikube after each run
+            # export PATH=$MINIKUBE_HOME/bin:$PATH
+            # $MINIKUBE_HOME/bin/minikube stop --profile=jenkins-minikube || true
+            
+            echo "Cleanup stage completed"
             '''
         }
     }
