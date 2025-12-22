@@ -71,11 +71,11 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 sh """
-                export DOCKER_BUILDKIT=1
-                docker build \
-                  --cache-from ${DOCKER_IMAGE}:latest \
-                  -t ${DOCKER_IMAGE}:${BUILD_NUMBER} \
-                  -t ${DOCKER_IMAGE}:latest .
+#                export DOCKER_BUILDKIT=1
+#                docker build \
+#                  --cache-from ${DOCKER_IMAGE}:latest \
+#                  -t ${DOCKER_IMAGE}:${BUILD_NUMBER} \
+#                  -t ${DOCKER_IMAGE}:latest .
                 """
             }
         }
@@ -89,9 +89,9 @@ pipeline {
                         passwordVariable: 'DOCKER_PASSWORD'
                     )]) {
                         sh '''
-                        echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin
-                        docker push ${DOCKER_IMAGE}:${BUILD_NUMBER}
-                        docker push ${DOCKER_IMAGE}:latest
+#                        echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin
+#                        docker push ${DOCKER_IMAGE}:${BUILD_NUMBER}
+#                        docker push ${DOCKER_IMAGE}:latest
                         '''
                     }
                 }
