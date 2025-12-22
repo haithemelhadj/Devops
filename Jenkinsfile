@@ -44,7 +44,13 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                sh "docker build -t ${DOCKER_IMAGE}:${BUILD_NUMBER} -t ${DOCKER_IMAGE}:latest ."
+                sh """
+                export DOCKER_BUILDKIT=1
+                docker build \
+                  --cache-from ${DOCKER_IMAGE}:latest \
+                  -t ${DOCKER_IMAGE}:${BUILD_NUMBER} \
+                  -t ${DOCKER_IMAGE}:latest .
+                """
             }
         }
 
@@ -66,20 +72,6 @@ pipeline {
             }
         }
 
-        stage('Run Container Locally') {
-            steps {
-                sh """
-                docker rm -f devops_container || true
-                docker run -d \
-                    --name devops_container \
-                    -p 8089:8089 \
-                    ${DOCKER_IMAGE}:latest
-                """
-                sh 'sleep 10'
-                sh 'docker ps | grep devops_container'
-            }
-        }
-
         stage('Setup Minikube') {
             steps {
                 sh '''
@@ -92,12 +84,13 @@ pipeline {
                     chmod +x $MINIKUBE_HOME/bin/minikube
                 fi
                 
-                # Start Minikube with valid version
+                # Start Minikube
                 $MINIKUBE_HOME/bin/minikube start \
                     --driver=docker \
                     --profile=jenkins-minikube \
-                    --memory=4096 \
-                    --cpus=2 \
+                    --memory=6144 \
+                    --cpus=3 \
+                    --disk-size=40g \
                     --wait=all \
                     --wait-timeout=5m
                 
@@ -107,7 +100,7 @@ pipeline {
             }
         }
 
-        stage('Deploy to Kubernetes') {
+        stage('Deploy MySQL to Kubernetes') {
             steps {
                 sh '''
                 export PATH=$MINIKUBE_HOME/bin:$PATH
@@ -117,28 +110,87 @@ pipeline {
                     create namespace devops --dry-run=client -o yaml | \
                 $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- apply -f -
                 
-                # Apply deployment and service
+                echo "=== Deploying MySQL ==="
+                
+                # Apply MySQL deployment (PV, PVC, Secret, Deployment, Service)
                 $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- \
-                    apply -f k8s/deployment.yaml -n devops
-                    
+                    apply -f k8s/mysql-deployment.yaml
+                
+                # Wait for PVC to be bound
+                echo "Waiting for MySQL PVC to be bound..."
                 $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- \
-                    apply -f k8s/service.yaml -n devops
+                    wait --for=jsonpath='{.status.phase}'=Bound \
+                    pvc/mysql-pvc -n devops --timeout=120s
+                
+                # Wait for MySQL deployment
+                echo "Waiting for MySQL deployment to be ready..."
+                $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- \
+                    rollout status deployment/mysql -n devops --timeout=300s
+                
+                # Wait for MySQL pods to be ready
+                $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- \
+                    wait --for=condition=ready pod -l app=mysql -n devops --timeout=300s
+                
+                # Verify MySQL is running
+                echo "=== MySQL Status ==="
+                $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- \
+                    get pods,pvc,svc -l app=mysql -n devops
+                
+                # Test MySQL connection
+                echo "Testing MySQL connection..."
+                $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- \
+                    exec -n devops deployment/mysql -- \
+                    mysqladmin ping -h localhost -u root -prootpassword
+                
+                echo "MySQL deployment completed successfully!"
+                '''
+            }
+        }
+
+        stage('Deploy Spring Boot to Kubernetes') {
+            steps {
+                sh '''
+                export PATH=$MINIKUBE_HOME/bin:$PATH
+                
+                echo "=== Deploying Spring Boot Application ==="
+                
+                # Apply Spring Boot deployment (PV, PVC, ConfigMap, Secret, Deployment, Service)
+                $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- \
+                    apply -f k8s/spring-deployment.yaml
+                
+                # Wait for PVC to be bound
+                echo "Waiting for Spring Boot PVC to be bound..."
+                $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- \
+                    wait --for=jsonpath='{.status.phase}'=Bound \
+                    pvc/spring-logs-pvc -n devops --timeout=120s
                 
                 # Wait for deployment
+                echo "Waiting for Spring Boot deployment to be ready..."
                 $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- \
                     rollout status deployment/devops-app -n devops --timeout=300s
                 
-                # Wait for pods
+                # Wait for pods to be ready
                 $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- \
                     wait --for=condition=ready pod -l app=devops-app -n devops --timeout=300s
                 
-                # Get pods status
+                # Get all resources
+                echo "=== Application Status ==="
                 $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- \
-                    get pods -n devops
+                    get all,pvc,configmap,secret -n devops
                 
-                # Get service URL
-                echo "Application URL:"
-                $MINIKUBE_HOME/bin/minikube service devops-app-service -n devops --profile=jenkins-minikube --url
+                # Get application URL
+                echo "=== Application URL ==="
+                APP_URL=$($MINIKUBE_HOME/bin/minikube service devops-app-service -n devops --profile=jenkins-minikube --url)
+                echo "Application accessible at: $APP_URL"
+                
+                # Test health endpoint
+                echo "=== Testing Application Health ==="
+                sleep 10
+                $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- \
+                    exec -n devops deployment/devops-app -- \
+                    curl -s http://localhost:8089/actuator/health || echo "Health check will be available once app starts"
+                
+                echo "Spring Boot deployment completed successfully!"
                 '''
             }
         }
@@ -151,6 +203,7 @@ pipeline {
                 
                 mkdir -p $HELM_HOME/bin
                 
+                echo "=== Installing Helm ==="
                 # Install Helm if not exists
                 if [ ! -f "$HELM_HOME/bin/helm" ]; then
                     curl -sSL https://get.helm.sh/helm-v3.15.4-linux-amd64.tar.gz -o helm.tar.gz
@@ -160,16 +213,19 @@ pipeline {
                     rm -rf helm.tar.gz linux-amd64
                 fi
                 
+                echo "=== Setting up Monitoring Namespace ==="
                 # Create monitoring namespace
                 minikube kubectl --profile=jenkins-minikube -- \
                     create namespace monitoring --dry-run=client -o yaml | \
                 minikube kubectl --profile=jenkins-minikube -- apply -f -
                 
                 # Add Helm repos
+                echo "=== Adding Helm Repositories ==="
                 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
                 helm repo add grafana https://grafana.github.io/helm-charts
                 helm repo update
                 
+                echo "=== Installing Prometheus ==="
                 # Install Prometheus
                 helm upgrade --install prometheus prometheus-community/prometheus \
                     --namespace monitoring \
@@ -177,9 +233,11 @@ pipeline {
                     --set server.service.nodePort=30090 \
                     --set alertmanager.enabled=false \
                     --set prometheus-pushgateway.enabled=false \
+                    --set server.persistentVolume.enabled=false \
                     --wait \
                     --timeout=5m
                 
+                echo "=== Installing Grafana ==="
                 # Install Grafana
                 helm upgrade --install grafana grafana/grafana \
                     --namespace monitoring \
@@ -191,16 +249,75 @@ pipeline {
                     --timeout=5m
                 
                 # Verify deployments
-                minikube kubectl --profile=jenkins-minikube -- get pods -n monitoring
+                echo "=== Monitoring Stack Status ==="
+                minikube kubectl --profile=jenkins-minikube -- get all -n monitoring
                 
                 # Get URLs
+                echo ""
                 echo "=== Monitoring URLs ==="
                 echo "Prometheus:"
                 minikube service prometheus-server -n monitoring --profile=jenkins-minikube --url
                 echo ""
                 echo "Grafana:"
-                minikube service grafana -n monitoring --profile=jenkins-minikube --url
+                GRAFANA_URL=$(minikube service grafana -n monitoring --profile=jenkins-minikube --url)
+                echo "$GRAFANA_URL"
                 echo "Grafana credentials: admin / admin"
+                echo ""
+                
+                echo "Monitoring deployment completed successfully!"
+                '''
+            }
+        }
+
+        stage('Verification & Testing') {
+            steps {
+                sh '''
+                export PATH=$MINIKUBE_HOME/bin:$PATH
+                
+                echo "=========================================="
+                echo "DEPLOYMENT VERIFICATION SUMMARY"
+                echo "=========================================="
+                
+                # Get all pods
+                echo ""
+                echo "=== All Pods Status ==="
+                $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- \
+                    get pods --all-namespaces
+                
+                # Get all services
+                echo ""
+                echo "=== All Services ==="
+                $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- \
+                    get svc --all-namespaces
+                
+                # Application logs
+                echo ""
+                echo "=== Spring Boot Application Logs (last 20 lines) ==="
+                $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- \
+                    logs -n devops deployment/devops-app --tail=20 || echo "Logs not available yet"
+                
+                # MySQL logs
+                echo ""
+                echo "=== MySQL Logs (last 10 lines) ==="
+                $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- \
+                    logs -n devops deployment/mysql --tail=10 || echo "Logs not available yet"
+                
+                echo ""
+                echo "=========================================="
+                echo "ACCESS INFORMATION"
+                echo "=========================================="
+                echo ""
+                echo "Application URL:"
+                $MINIKUBE_HOME/bin/minikube service devops-app-service -n devops --profile=jenkins-minikube --url
+                echo ""
+                echo "Prometheus URL:"
+                $MINIKUBE_HOME/bin/minikube service prometheus-server -n monitoring --profile=jenkins-minikube --url
+                echo ""
+                echo "Grafana URL:"
+                $MINIKUBE_HOME/bin/minikube service grafana -n monitoring --profile=jenkins-minikube --url
+                echo "(Username: admin, Password: admin)"
+                echo ""
+                echo "=========================================="
                 '''
             }
         }
@@ -209,16 +326,26 @@ pipeline {
     post {
         always {
             sh '''
-            # Cleanup
-            docker rm -f devops_container || true
+            echo "Pipeline execution completed"
             '''
+        }
+        success {
+            echo 'Pipeline completed successfully! ✅'
         }
         failure {
             sh '''
             export PATH=$MINIKUBE_HOME/bin:$PATH
-            echo "=== Debugging Information ==="
-            $MINIKUBE_HOME/bin/minikube logs --profile=jenkins-minikube || true
+            echo "=== DEBUGGING INFORMATION ==="
+            echo ""
+            echo "Minikube logs:"
+            $MINIKUBE_HOME/bin/minikube logs --profile=jenkins-minikube --length=50 || true
+            echo ""
+            echo "All pods status:"
             $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- get pods -A || true
+            echo ""
+            echo "Failed pods details:"
+            $MINIKUBE_HOME/bin/minikube kubectl --profile=jenkins-minikube -- \
+                get pods -A --field-selector=status.phase!=Running,status.phase!=Succeeded || true
             '''
         }
     }
